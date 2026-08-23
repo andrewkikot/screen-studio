@@ -1,0 +1,28 @@
+appId: com.andrew.screenshot-studio
+productName: Screenshot Studio
+directories:
+  buildResources: build
+files:
+  - out/**
+extraResources:
+  - from: resources
+    to: .
+    filter:
+      - tray.png
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  category: public.app-category.graphics-design
+  target:
+    - dmg
+linux:
+  category: Graphics
+  target:
+    - AppImage
+    - deb
