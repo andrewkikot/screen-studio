@@ -2,6 +2,10 @@ appId: com.andrew.screenshot-studio
 productName: Screenshot Studio
 directories:
   buildResources: build
+publish:
+  provider: github
+  owner: andrewkikot
+  repo: screen-studio
 files:
   - out/**
 extraResources:
@@ -9,6 +13,7 @@ extraResources:
     to: .
     filter:
       - tray.png
+      - tray-update.png
 win:
   target:
     - target: nsis

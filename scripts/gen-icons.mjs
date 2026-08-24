@@ -56,7 +56,7 @@ function png(width, height, pixelFn) {
   ])
 }
 
-function shotIcon(size) {
+function shotIcon(size, badge = false) {
   const h = (size - 1) / 2
   const corner = size * 0.24
   const cx = size * 0.5
@@ -66,15 +66,22 @@ function shotIcon(size) {
   const fx = size * 0.74
   const fy = size * 0.26
   const fr = size * 0.075
+  const bx = size * 0.8
+  const by = size * 0.2
+  const br = size * 0.18
   return png(size, size, (x, y) => {
     const qx = Math.max(Math.abs(x - h) - (h - corner), 0)
     const qy = Math.max(Math.abs(y - h) - (h - corner), 0)
     if (Math.hypot(qx, qy) > corner) return [0, 0, 0, 0]
     const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy)
-    if (Math.hypot(x - fx, y - fy) < fr) return [250, 204, 21, 255]
-    if (Math.abs(d - R) < ringW) return [255, 255, 255, 255]
-    if (d < R * 0.42) return [255, 255, 255, 255]
-    return [79, 70, 229, 255]
+    let px = [79, 70, 229, 255]
+    if (Math.abs(d - R) < ringW || d < R * 0.42) px = [255, 255, 255, 255]
+    if (Math.hypot(x - fx, y - fy) < fr) px = [250, 204, 21, 255]
+    if (badge) {
+      const bd = Math.hypot(x - bx, y - by)
+      if (bd < br) return bd < br * 0.62 ? [239, 68, 68, 255] : [255, 255, 255, 255]
+    }
+    return px
   })
 }
 
@@ -97,5 +104,6 @@ mkdirSync(join(root, 'build'), { recursive: true })
 mkdirSync(join(root, 'resources'), { recursive: true })
 writeFileSync(join(root, 'build', 'icon.png'), shotIcon(512))
 writeFileSync(join(root, 'resources', 'tray.png'), shotIcon(32))
+writeFileSync(join(root, 'resources', 'tray-update.png'), shotIcon(32, true))
 writeFileSync(join(root, 'build', 'icon.ico'), ico(shotIcon(256), 256))
-console.log('icons written: build/icon.png (512), build/icon.ico (256), resources/tray.png (32)')
+console.log('icons written: build/icon.png (512), build/icon.ico (256), resources/tray.png (32), resources/tray-update.png (32)')

@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getSettings, setSettings } from './config'
 import type { EditorShot, ExportRequest, Rect, Settings } from '../shared/types'
+import { checkForUpdates, getUpdaterState, initUpdater, onUpdateState, startUpdate } from './updater'
 
 let tray: Tray | null = null
 let overlay: BrowserWindow | null = null
@@ -51,10 +52,28 @@ function displayHotkey(accelerator: string): string {
     .join('+')
 }
 
+function updateMenuItems(): Electron.MenuItemConstructorOptions[] {
+  const s = getUpdaterState()
+  switch (s.phase) {
+    case 'available':
+      return [
+        { label: `Update available${s.version ? ` (v${s.version})` : ''} — download`, click: () => void startUpdate() }
+      ]
+    case 'downloading':
+      return [{ label: `Downloading update… ${s.percent}%`, enabled: false }]
+    case 'ready':
+      return [{ label: `Restart to install update`, click: () => void startUpdate() }]
+    default:
+      return [{ label: 'Check for updates', click: () => void checkForUpdates() }]
+  }
+}
+
 function buildTrayMenu(): Menu {
   return Menu.buildFromTemplate([
     { label: `Capture (${displayHotkey(getSettings().hotkey)})`, click: () => void startCapture() },
     { label: 'Settings…', click: () => openSettings() },
+    { type: 'separator' },
+    ...updateMenuItems(),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])
@@ -62,6 +81,16 @@ function buildTrayMenu(): Menu {
 
 function refreshTray(): void {
   tray?.setContextMenu(buildTrayMenu())
+  applyTrayBadge()
+}
+
+function applyTrayBadge(): void {
+  if (!tray) return
+  const s = getUpdaterState()
+  tray.setImage(nativeImage.createFromPath(resourcePath(s.phase === 'idle' ? 'tray.png' : 'tray-update.png')))
+  tray.setToolTip(
+    s.phase === 'idle' || !s.version ? 'Screenshot Studio' : `Screenshot Studio — v${s.version} available`
+  )
 }
 
 function createTray(): void {
@@ -69,6 +98,7 @@ function createTray(): void {
   tray = new Tray(icon)
   tray.setToolTip('Screenshot Studio')
   tray.setContextMenu(buildTrayMenu())
+  onUpdateState(() => refreshTray())
 }
 
 function registerHotkey(): void {
@@ -343,6 +373,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   createTray()
   registerHotkey()
+  initUpdater()
   console.log('Screenshot Studio ready in tray')
 })
 
