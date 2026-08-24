@@ -2,6 +2,7 @@ export type ImageFormat = 'png' | 'jpeg'
 
 export interface Settings {
   hotkey: string
+  pickerHotkey: string
   saveDir: string
   format: ImageFormat
 }

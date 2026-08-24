@@ -15,6 +15,7 @@ export function getSettings(): Settings {
   if (cache) return cache
   const defaults: Settings = {
     hotkey: 'CommandOrControl+Shift+S',
+    pickerHotkey: 'CommandOrControl+Shift+C',
     saveDir: join(app.getPath('pictures'), 'Screenshot Studio'),
     format: 'png'
   }

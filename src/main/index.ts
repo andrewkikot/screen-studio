@@ -22,9 +22,12 @@ let tray: Tray | null = null
 let overlay: BrowserWindow | null = null
 let editor: BrowserWindow | null = null
 let settings: BrowserWindow | null = null
+let picker: BrowserWindow | null = null
 let currentImage: NativeImage | null = null
 let currentDisplay: Display | null = null
 let pendingShot: EditorShot | null = null
+let pickerImage: NativeImage | null = null
+let pickerDisplay: Display | null = null
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
@@ -71,6 +74,7 @@ function updateMenuItems(): Electron.MenuItemConstructorOptions[] {
 function buildTrayMenu(): Menu {
   return Menu.buildFromTemplate([
     { label: `Capture (${displayHotkey(getSettings().hotkey)})`, click: () => void startCapture() },
+    { label: `Color picker (${displayHotkey(getSettings().pickerHotkey)})`, click: () => void startPicker() },
     { label: 'Settings…', click: () => openSettings() },
     { type: 'separator' },
     ...updateMenuItems(),
@@ -101,34 +105,45 @@ function createTray(): void {
   onUpdateState(() => refreshTray())
 }
 
-function registerHotkey(): void {
+function registerHotkeys(): void {
   globalShortcut.unregisterAll()
-  const ok = globalShortcut.register(getSettings().hotkey, () => void startCapture())
-  if (!ok) console.warn(`global shortcut "${getSettings().hotkey}" is already taken by another app`)
+  const s = getSettings()
+  if (!globalShortcut.register(s.hotkey, () => void startCapture())) {
+    console.warn(`global shortcut "${s.hotkey}" is already taken by another app`)
+  }
+  if (!globalShortcut.register(s.pickerHotkey, () => void startPicker())) {
+    console.warn(`global shortcut "${s.pickerHotkey}" is already taken by another app`)
+  }
+}
+
+async function grabScreen(): Promise<{ image: NativeImage; display: Display } | null> {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(display.size.width * display.scaleFactor),
+      height: Math.round(display.size.height * display.scaleFactor)
+    }
+  })
+  if (sources.length === 0) return null
+  const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
+  if (!source.thumbnail || source.thumbnail.isEmpty()) return null
+  return { image: source.thumbnail, display }
 }
 
 async function startCapture(): Promise<void> {
-  if (overlay || !gotLock) return
+  if (overlay || picker || !gotLock) return
   try {
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: {
-        width: Math.round(display.size.width * display.scaleFactor),
-        height: Math.round(display.size.height * display.scaleFactor)
-      }
-    })
-    if (sources.length === 0) return
-    const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
-    if (!source.thumbnail || source.thumbnail.isEmpty()) return
-    currentImage = source.thumbnail
-    currentDisplay = display
+    const grab = await grabScreen()
+    if (!grab) return
+    currentImage = grab.image
+    currentDisplay = grab.display
 
     const win = new BrowserWindow({
-      x: display.bounds.x,
-      y: display.bounds.y,
-      width: display.bounds.width,
-      height: display.bounds.height,
+      x: grab.display.bounds.x,
+      y: grab.display.bounds.y,
+      width: grab.display.bounds.width,
+      height: grab.display.bounds.height,
       frame: false,
       transparent: true,
       resizable: false,
@@ -178,6 +193,63 @@ function cleanupCapture(): void {
   closeOverlay()
 }
 
+async function startPicker(): Promise<void> {
+  if (overlay || picker || !gotLock) return
+  try {
+    const grab = await grabScreen()
+    if (!grab) return
+    pickerImage = grab.image
+    pickerDisplay = grab.display
+
+    const win = new BrowserWindow({
+      x: grab.display.bounds.x,
+      y: grab.display.bounds.y,
+      width: grab.display.bounds.width,
+      height: grab.display.bounds.height,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      enableLargerThanScreen: true,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js')
+      }
+    })
+    picker = win
+    win.on('closed', () => {
+      if (picker === win) picker = null
+    })
+    win.on('blur', () => {
+      if (picker === win && win.isVisible()) closePicker()
+    })
+    win.once('ready-to-show', () => {
+      if (picker !== win) return
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.show()
+      win.focus()
+    })
+    loadPage(win, 'picker.html')
+  } catch (err) {
+    console.error('color picker failed:', err)
+    closePicker()
+  }
+}
+
+function closePicker(): void {
+  if (picker) {
+    picker.destroy()
+    picker = null
+  }
+  pickerImage = null
+  pickerDisplay = null
+}
+
 function openEditor(): void {  if (!pendingShot) return
   if (editor) {
     editor.destroy()
@@ -218,7 +290,7 @@ function openSettings(): void {
   }
   const win = new BrowserWindow({
     width: 540,
-    height: 400,
+    height: 500,
     resizable: false,
     title: 'Screenshot Studio — Settings',
     backgroundColor: '#0f172a',
@@ -278,6 +350,25 @@ ipcMain.handle('overlay:cancel', () => {
   cleanupCapture()
 })
 
+ipcMain.handle('picker:get-shot', () => {
+  if (!pickerImage || !pickerDisplay) return null
+  return {
+    dataUrl: pickerImage.toDataURL(),
+    width: pickerDisplay.size.width,
+    height: pickerDisplay.size.height,
+    scaleFactor: pickerDisplay.scaleFactor
+  }
+})
+
+ipcMain.handle('picker:pick', (_e, hex: string) => {
+  clipboard.writeText(hex)
+  return true
+})
+
+ipcMain.handle('picker:cancel', () => {
+  closePicker()
+})
+
 ipcMain.handle('editor:get-shot', () => pendingShot)
 
 ipcMain.handle('editor:export', async (_e, req: ExportRequest) => {
@@ -335,14 +426,29 @@ ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => {
     }
   }
   if (patch.hotkey && patch.hotkey !== prev.hotkey) {
-    registerHotkey()
+    const revert: Partial<Settings> = { hotkey: prev.hotkey }
+    registerHotkeys()
     if (!globalShortcut.isRegistered(patch.hotkey)) {
-      setSettings({ hotkey: prev.hotkey })
-      registerHotkey()
+      setSettings(revert)
+      registerHotkeys()
       refreshTray()
       return {
         ok: false,
         error: `${displayHotkey(patch.hotkey)} is taken by another app`,
+        settings: getSettings()
+      }
+    }
+  }
+  if (patch.pickerHotkey && patch.pickerHotkey !== prev.pickerHotkey) {
+    const revert: Partial<Settings> = { pickerHotkey: prev.pickerHotkey }
+    registerHotkeys()
+    if (!globalShortcut.isRegistered(patch.pickerHotkey)) {
+      setSettings(revert)
+      registerHotkeys()
+      refreshTray()
+      return {
+        ok: false,
+        error: `${displayHotkey(patch.pickerHotkey)} is taken by another app`,
         settings: getSettings()
       }
     }
@@ -372,7 +478,7 @@ ipcMain.handle('settings:choose-dir', async () => {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   createTray()
-  registerHotkey()
+  registerHotkeys()
   initUpdater()
   console.log('Screenshot Studio ready in tray')
 })

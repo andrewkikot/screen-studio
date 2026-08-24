@@ -1,0 +1,117 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.picker-root {
+  position: fixed;
+  inset: 0;
+  cursor: none;
+  user-select: none;
+}
+
+.picker-bg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.lens-wrap {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.lens {
+  position: relative;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid rgba(248, 250, 252, 0.95);
+  outline: 1px solid rgba(2, 6, 23, 0.65);
+  box-shadow: 0 8px 28px rgba(2, 6, 23, 0.5);
+  background: #0f172a;
+}
+
+.lens img {
+  position: absolute;
+  max-width: none;
+  image-rendering: pixelated;
+}
+
+.lens-crossh,
+.lens-crossv {
+  position: absolute;
+  background: #f8fafc;
+  mix-blend-mode: difference;
+}
+
+.lens-crossh {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
+.lens-crossv {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+}
+
+.lens-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font: 600 12px/1.5 ui-monospace, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.lens-label.copied {
+  color: #34d399;
+}
+
+.lens-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lens-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(248, 250, 252, 0.7);
+}
+
+.lens-rgb {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #94a3b8;
+}

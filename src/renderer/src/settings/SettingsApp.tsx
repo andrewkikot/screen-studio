@@ -4,6 +4,21 @@ import type { ImageFormat, Settings } from '../../../shared/types'
 
 const isMac = /Mac/i.test(navigator.platform)
 
+type HotkeyField = 'hotkey' | 'pickerHotkey'
+
+const HOTKEY_FIELDS: Array<{ field: HotkeyField; title: string; hint: string }> = [
+  {
+    field: 'hotkey',
+    title: 'Capture shortcut',
+    hint: 'Global shortcut — works in any app. Combine a key with Ctrl, Alt and/or Shift.'
+  },
+  {
+    field: 'pickerHotkey',
+    title: 'Color picker shortcut',
+    hint: 'Opens a magnifier lens — click to copy the color under it as #hex. Esc or right-click cancels.'
+  }
+]
+
 function pretty(accelerator: string): string {
   return accelerator
     .split('+')
@@ -61,7 +76,7 @@ function acceleratorFromEvent(e: KeyboardEvent): string | null {
 
 export default function SettingsApp(): ReactElement {
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [recording, setRecording] = useState(false)
+  const [recording, setRecording] = useState<HotkeyField | null>(null)
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null)
 
   useEffect(() => {
@@ -77,11 +92,12 @@ export default function SettingsApp(): ReactElement {
 
   useEffect(() => {
     if (!recording) return
+    const field = recording
     const onKey = (e: KeyboardEvent): void => {
       e.preventDefault()
       e.stopPropagation()
       if (e.key === 'Escape') {
-        setRecording(false)
+        setRecording(null)
         setMsg(null)
         return
       }
@@ -90,17 +106,19 @@ export default function SettingsApp(): ReactElement {
         setMsg({ text: 'Use a letter, number or F-key together with Ctrl/Alt/Shift', bad: true })
         return
       }
-      void window.api.setSettings({ hotkey: acc }).then((res) => {
+      const patch: Partial<Settings> =
+        field === 'hotkey' ? { hotkey: acc } : { pickerHotkey: acc }
+      void window.api.setSettings(patch).then((res) => {
         setSettings(res.settings)
         if (res.ok) {
-          setRecording(false)
+          setRecording(null)
           setMsg({ text: `Shortcut set to ${pretty(acc)}` })
         } else {
           setMsg({ text: res.error ?? `${pretty(acc)} is not available`, bad: true })
         }
       })
     }
-    const onBlur = (): void => setRecording(false)
+    const onBlur = (): void => setRecording(null)
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('blur', onBlur)
     return () => {
@@ -131,28 +149,30 @@ export default function SettingsApp(): ReactElement {
         <h1>Settings</h1>
       </header>
 
-      <section className="s-section">
-        <h2>Capture shortcut</h2>
-        <div className="s-row">
-          <button
-            type="button"
-            className={`hotkey-box${recording ? ' recording' : ''}`}
-            onClick={() => {
-              setMsg(null)
-              setRecording(true)
-            }}
-            title="Click to record a new shortcut"
-          >
-            {recording ? 'Press keys… (Esc to cancel)' : pretty(settings.hotkey)}
-          </button>
-          {!recording && (
-            <button type="button" className="s-btn" onClick={() => setRecording(true)}>
-              Change
+      {HOTKEY_FIELDS.map(({ field, title, hint }) => (
+        <section className="s-section" key={field}>
+          <h2>{title}</h2>
+          <div className="s-row">
+            <button
+              type="button"
+              className={`hotkey-box${recording === field ? ' recording' : ''}`}
+              onClick={() => {
+                setMsg(null)
+                setRecording(field)
+              }}
+              title="Click to record a new shortcut"
+            >
+              {recording === field ? 'Press keys… (Esc to cancel)' : pretty(settings[field])}
             </button>
-          )}
-        </div>
-        <p className="s-hint">Global shortcut — works in any app. Combine a key with Ctrl, Alt and/or Shift.</p>
-      </section>
+            {recording !== field && (
+              <button type="button" className="s-btn" onClick={() => setRecording(field)}>
+                Change
+              </button>
+            )}
+          </div>
+          <p className="s-hint">{hint}</p>
+        </section>
+      ))}
 
       <section className="s-section">
         <h2>Saving</h2>

@@ -19,6 +19,9 @@ declare global {
       getOverlayShot(): Promise<OverlayShot | null>
       confirmSelection(rect: Rect): Promise<boolean>
       cancelCapture(): Promise<void>
+      getPickerShot(): Promise<OverlayShot | null>
+      pickColor(hex: string): Promise<boolean>
+      cancelPicker(): Promise<void>
       getEditorShot(): Promise<EditorShot | null>
       exportShot(req: ExportRequest): Promise<ExportResult>
       getSettings(): Promise<Settings>
