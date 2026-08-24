@@ -12,6 +12,7 @@ import {
   Tray
 } from 'electron'
 import type { Display, NativeImage } from 'electron'
+import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getSettings, setSettings } from './config'
@@ -31,20 +32,36 @@ const pickerShots = new Map<number, Grab>()
 let editor: BrowserWindow | null = null
 let settings: BrowserWindow | null = null
 let pendingShot: EditorShot | null = null
+let gotLock = true
 
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) app.quit()
+// Native-Wayland screen capture goes through xdg-desktop-portal ScreenCast, which pops
+// GNOME's "pick a monitor to share" dialog before every grab, and globalShortcut is
+// unreliable there. Ozone backend selection happens before main-process JS runs, so
+// appendSwitch is too late — relaunch with a real --ozone-platform=x11 argv flag instead.
+// Opt out with SS_OZONE=wayland; skipped automatically when XWayland is unavailable.
+function reexecUnderX11IfNeeded(): void {
+  if (
+    process.platform !== 'linux' ||
+    process.env.SS_X11_REEXEC === '1' ||
+    process.env.SS_OZONE === 'wayland' ||
+    !(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') ||
+    !process.env.DISPLAY
+  ) {
+    return
+  }
+  const child = spawn(process.execPath, [...process.argv.slice(1), '--ozone-platform=x11'], {
+    stdio: 'inherit',
+    env: { ...process.env, SS_X11_REEXEC: '1' }
+  })
+  child.once('exit', (code) => app.exit(code ?? 0))
+  gotLock = false
+}
 
-// Native-Wayland screen capture goes through xdg-desktop-portal ScreenCast, which
-// forces a "pick a monitor" permission dialog before every grab, and globalShortcut
-// is unreliable there. Running under XWayland keeps capture + hotkeys instant.
-// Set SS_OZONE=wayland to opt back into native Wayland.
-if (
-  process.platform === 'linux' &&
-  process.env.WAYLAND_DISPLAY &&
-  process.env.SS_OZONE !== 'wayland'
-) {
-  app.commandLine.appendSwitch('ozone-platform', 'x11')
+reexecUnderX11IfNeeded()
+
+if (gotLock) {
+  gotLock = app.requestSingleInstanceLock()
+  if (!gotLock) app.quit()
 }
 
 app.on('second-instance', () => {
@@ -469,6 +486,7 @@ ipcMain.handle('settings:choose-dir', async () => {
 })
 
 app.whenReady().then(() => {
+  if (!gotLock) return
   Menu.setApplicationMenu(null)
   createTray()
   registerHotkeys()
