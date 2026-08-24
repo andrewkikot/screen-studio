@@ -1,7 +1,7 @@
 {
   "name": "screenshot-studio",
   "productName": "Screenshot Studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Cross-platform screenshot capture with built-in annotation editor",
   "private": true,
   "main": "./out/main/index.js",
