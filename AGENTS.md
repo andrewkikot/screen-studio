@@ -13,7 +13,7 @@ npm run dev          # dev mode (HMR); auto-generates icons first
 npm run typecheck    # MUST pass: runs BOTH tsconfig.node.json and tsconfig.web.json
 npm run build        # production build -> out/
 npm run dist         # build + electron-builder installers
-node scripts/gen-icons.mjs   # regenerates build/icon.png/.ico, resources/tray.png (dependency-free PNG encoder)
+node scripts/gen-icons.mjs   # regenerates build/icon.png/.ico/.icns, resources/tray.png (dependency-free PNG/ICNS encoder)
 ```
 
 There is **no lint config**. `npm run typecheck` is the gate — always run it after edits.

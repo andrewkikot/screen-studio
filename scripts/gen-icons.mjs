@@ -100,10 +100,34 @@ function ico(pngBlob, size) {
   return Buffer.concat([header, entry, pngBlob])
 }
 
+function icns(entries) {
+  const chunks = entries.map(([type, size]) => {
+    const blob = shotIcon(size)
+    const chunkHeader = Buffer.alloc(8)
+    chunkHeader.write(type, 0, 'ascii')
+    chunkHeader.writeUInt32BE(8 + blob.length, 4)
+    return Buffer.concat([chunkHeader, blob])
+  })
+  const total = chunks.reduce((n, c) => n + c.length, 8)
+  const fileHeader = Buffer.alloc(8)
+  fileHeader.write('icns', 0, 'ascii')
+  fileHeader.writeUInt32BE(total, 4)
+  return Buffer.concat([fileHeader, ...chunks])
+}
+
 mkdirSync(join(root, 'build'), { recursive: true })
 mkdirSync(join(root, 'resources'), { recursive: true })
 writeFileSync(join(root, 'build', 'icon.png'), shotIcon(512))
 writeFileSync(join(root, 'resources', 'tray.png'), shotIcon(32))
 writeFileSync(join(root, 'resources', 'tray-update.png'), shotIcon(32, true))
 writeFileSync(join(root, 'build', 'icon.ico'), ico(shotIcon(256), 256))
-console.log('icons written: build/icon.png (512), build/icon.ico (256), resources/tray.png (32), resources/tray-update.png (32)')
+writeFileSync(
+  join(root, 'build', 'icon.icns'),
+  icns([
+    ['ic07', 128],
+    ['ic08', 256],
+    ['ic09', 512],
+    ['ic10', 1024]
+  ])
+)
+console.log('icons written: build/icon.png (512), build/icon.ico (256), build/icon.icns (128-1024), resources/tray.png (32), resources/tray-update.png (32)')

@@ -25,6 +25,8 @@ jobs:
 
       - run: npm ci
 
+      - run: node scripts/gen-icons.mjs
+
       - run: npm run typecheck
 
       - run: npm run build
@@ -34,6 +36,7 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
@@ -42,14 +45,22 @@ jobs:
         run: npx electron-builder --mac --x64 --arm64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Package and publish (Linux)
+      - name: Package and publish (Linux AppImage)
         if: runner.os == 'Linux'
-        run: npx electron-builder --linux --publish always
+        run: npx electron-builder --linux AppImage --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and publish (Linux deb)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: npx electron-builder --linux deb --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
