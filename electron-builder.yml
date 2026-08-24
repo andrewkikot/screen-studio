@@ -6,6 +6,7 @@ publish:
   provider: github
   owner: andrewkikot
   repo: screen-studio
+  releaseType: release
 files:
   - out/**
 extraResources:
