@@ -13,7 +13,7 @@ import {
 } from 'electron'
 import type { Display, NativeImage } from 'electron'
 import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getSettings, setSettings } from './config'
 import type { EditorShot, ExportRequest, Rect, Settings } from '../shared/types'
@@ -40,16 +40,34 @@ let gotLock = true
 // appendSwitch is too late — relaunch with a real --ozone-platform=x11 argv flag instead.
 // Opt out with SS_OZONE=wayland; skipped automatically when XWayland is unavailable.
 function reexecUnderX11IfNeeded(): void {
+  const waylandSession = !!(
+    process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
+  )
+  console.error(
+    `[ss] pid=${process.pid} reexec=${process.env.SS_X11_REEXEC ?? '0'} wayland=${waylandSession} ` +
+      `display=${process.env.DISPLAY ?? 'unset'} ss_ozone=${process.env.SS_OZONE ?? 'unset'} ` +
+      `hint=${process.env.ELECTRON_OZONE_PLATFORM_HINT ?? 'unset'}`
+  )
   if (
     process.platform !== 'linux' ||
     process.env.SS_X11_REEXEC === '1' ||
     process.env.SS_OZONE === 'wayland' ||
-    !(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') ||
+    !waylandSession ||
     !process.env.DISPLAY
   ) {
     return
   }
-  const child = spawn(process.execPath, [...process.argv.slice(1), '--ozone-platform=x11'], {
+  // process.argv loses raw Chromium flags injected by AppImage AppRun (e.g. --no-sandbox);
+  // read the true argv so the child keeps them.
+  const realArgv =
+    process.platform === 'linux'
+      ? readFileSync('/proc/self/cmdline', 'utf8')
+          .split('\0')
+          .filter(Boolean)
+          .slice(1)
+      : process.argv.slice(1)
+  console.error(`[ss] relaunching under x11: ${JSON.stringify([...realArgv, '--ozone-platform=x11'])}`)
+  const child = spawn(process.execPath, [...realArgv, '--ozone-platform=x11'], {
     stdio: 'inherit',
     env: { ...process.env, SS_X11_REEXEC: '1' }
   })
