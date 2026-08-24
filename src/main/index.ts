@@ -18,19 +18,34 @@ import { getSettings, setSettings } from './config'
 import type { EditorShot, ExportRequest, Rect, Settings } from '../shared/types'
 import { checkForUpdates, getUpdaterState, initUpdater, onUpdateState, startUpdate } from './updater'
 
+interface Grab {
+  image: NativeImage
+  display: Display
+}
+
 let tray: Tray | null = null
-let overlay: BrowserWindow | null = null
+let overlays: BrowserWindow[] = []
+let pickers: BrowserWindow[] = []
+const overlayShots = new Map<number, Grab>()
+const pickerShots = new Map<number, Grab>()
 let editor: BrowserWindow | null = null
 let settings: BrowserWindow | null = null
-let picker: BrowserWindow | null = null
-let currentImage: NativeImage | null = null
-let currentDisplay: Display | null = null
 let pendingShot: EditorShot | null = null
-let pickerImage: NativeImage | null = null
-let pickerDisplay: Display | null = null
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
+
+// Native-Wayland screen capture goes through xdg-desktop-portal ScreenCast, which
+// forces a "pick a monitor" permission dialog before every grab, and globalShortcut
+// is unreliable there. Running under XWayland keeps capture + hotkeys instant.
+// Set SS_OZONE=wayland to opt back into native Wayland.
+if (
+  process.platform === 'linux' &&
+  process.env.WAYLAND_DISPLAY &&
+  process.env.SS_OZONE !== 'wayland'
+) {
+  app.commandLine.appendSwitch('ozone-platform', 'x11')
+}
 
 app.on('second-instance', () => {
   void startCapture()
@@ -116,125 +131,106 @@ function registerHotkeys(): void {
   }
 }
 
-async function grabScreen(): Promise<{ image: NativeImage; display: Display } | null> {
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: {
-      width: Math.round(display.size.width * display.scaleFactor),
-      height: Math.round(display.size.height * display.scaleFactor)
+async function grabAllDisplays(): Promise<Grab[]> {
+  const displays = screen.getAllDisplays()
+  const thumbnailSize = {
+    width: Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor))),
+    height: Math.max(...displays.map((d) => Math.round(d.size.height * d.scaleFactor)))
+  }
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize })
+  const grabs: Grab[] = []
+  const used = new Set<string>()
+  for (const display of displays) {
+    const source =
+      sources.find((s) => s.display_id === String(display.id) && !used.has(s.id)) ??
+      sources.find((s) => !used.has(s.id))
+    if (!source || !source.thumbnail || source.thumbnail.isEmpty()) continue
+    used.add(source.id)
+    grabs.push({ image: source.thumbnail, display })
+  }
+  return grabs
+}
+
+function destroyGroup(group: BrowserWindow[]): void {
+  for (const win of [...group]) win.destroy()
+}
+
+function createCaptureWindow(
+  group: BrowserWindow[],
+  shots: Map<number, Grab>,
+  grab: Grab,
+  page: string,
+  onDismiss: () => void
+): BrowserWindow {
+  const win = new BrowserWindow({
+    x: grab.display.bounds.x,
+    y: grab.display.bounds.y,
+    width: grab.display.bounds.width,
+    height: grab.display.bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js')
     }
   })
-  if (sources.length === 0) return null
-  const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
-  if (!source.thumbnail || source.thumbnail.isEmpty()) return null
-  return { image: source.thumbnail, display }
+  group.push(win)
+  shots.set(win.id, grab)
+  win.on('closed', () => {
+    shots.delete(win.id)
+    const i = group.indexOf(win)
+    if (i !== -1) group.splice(i, 1)
+  })
+  win.on('blur', () => {
+    if (!win.isVisible()) return
+    setTimeout(() => {
+      if (group.length === 0) return
+      if (group.some((w) => !w.isDestroyed() && w.isFocused())) return
+      onDismiss()
+    }, 150)
+  })
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed() || !group.includes(win)) return
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.show()
+    win.focus()
+  })
+  loadPage(win, page)
+  return win
 }
 
 async function startCapture(): Promise<void> {
-  if (overlay || picker || !gotLock) return
+  if (overlays.length > 0 || pickers.length > 0 || !gotLock) return
   try {
-    const grab = await grabScreen()
-    if (!grab) return
-    currentImage = grab.image
-    currentDisplay = grab.display
-
-    const win = new BrowserWindow({
-      x: grab.display.bounds.x,
-      y: grab.display.bounds.y,
-      width: grab.display.bounds.width,
-      height: grab.display.bounds.height,
-      frame: false,
-      transparent: true,
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      enableLargerThanScreen: true,
-      skipTaskbar: true,
-      show: false,
-      backgroundColor: '#00000000',
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js')
-      }
-    })
-    overlay = win
-    win.on('closed', () => {
-      if (overlay === win) overlay = null
-    })
-    win.on('blur', () => {
-      if (overlay === win && win.isVisible()) cleanupCapture()
-    })
-    win.once('ready-to-show', () => {
-      if (overlay !== win) return
-      win.setAlwaysOnTop(true, 'screen-saver')
-      win.show()
-      win.focus()
-    })
-    loadPage(win, 'overlay.html')
+    const grabs = await grabAllDisplays()
+    if (grabs.length === 0) return
+    for (const grab of grabs) createCaptureWindow(overlays, overlayShots, grab, 'overlay.html', () => cleanupCapture())
   } catch (err) {
     console.error('capture failed:', err)
     cleanupCapture()
   }
 }
 
-function closeOverlay(): void {
-  if (overlay) {
-    overlay.destroy()
-    overlay = null
-  }
-}
-
 function cleanupCapture(): void {
-  currentImage = null
-  currentDisplay = null
   pendingShot = null
-  closeOverlay()
+  overlayShots.clear()
+  destroyGroup(overlays)
 }
 
 async function startPicker(): Promise<void> {
-  if (overlay || picker || !gotLock) return
+  if (overlays.length > 0 || pickers.length > 0 || !gotLock) return
   try {
-    const grab = await grabScreen()
-    if (!grab) return
-    pickerImage = grab.image
-    pickerDisplay = grab.display
-
-    const win = new BrowserWindow({
-      x: grab.display.bounds.x,
-      y: grab.display.bounds.y,
-      width: grab.display.bounds.width,
-      height: grab.display.bounds.height,
-      frame: false,
-      transparent: true,
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      enableLargerThanScreen: true,
-      skipTaskbar: true,
-      show: false,
-      backgroundColor: '#00000000',
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js')
-      }
-    })
-    picker = win
-    win.on('closed', () => {
-      if (picker === win) picker = null
-    })
-    win.on('blur', () => {
-      if (picker === win && win.isVisible()) closePicker()
-    })
-    win.once('ready-to-show', () => {
-      if (picker !== win) return
-      win.setAlwaysOnTop(true, 'screen-saver')
-      win.show()
-      win.focus()
-    })
-    loadPage(win, 'picker.html')
+    const grabs = await grabAllDisplays()
+    if (grabs.length === 0) return
+    for (const grab of grabs) createCaptureWindow(pickers, pickerShots, grab, 'picker.html', () => closePicker())
   } catch (err) {
     console.error('color picker failed:', err)
     closePicker()
@@ -242,12 +238,8 @@ async function startPicker(): Promise<void> {
 }
 
 function closePicker(): void {
-  if (picker) {
-    picker.destroy()
-    picker = null
-  }
-  pickerImage = null
-  pickerDisplay = null
+  pickerShots.clear()
+  destroyGroup(pickers)
 }
 
 function openEditor(): void {  if (!pendingShot) return
@@ -308,20 +300,21 @@ function openSettings(): void {
   loadPage(win, 'settings.html')
 }
 
-ipcMain.handle('overlay:get-shot', () => {
-  if (!currentImage || !currentDisplay) return null
+ipcMain.handle('overlay:get-shot', (e) => {
+  const grab = overlayShots.get(e.sender.id)
+  if (!grab) return null
   return {
-    dataUrl: currentImage.toDataURL(),
-    width: currentDisplay.size.width,
-    height: currentDisplay.size.height,
-    scaleFactor: currentDisplay.scaleFactor
+    dataUrl: grab.image.toDataURL(),
+    width: grab.display.size.width,
+    height: grab.display.size.height,
+    scaleFactor: grab.display.scaleFactor
   }
 })
 
-ipcMain.handle('overlay:confirm', (_e, rect: Rect) => {
-  const image = currentImage
-  const display = currentDisplay
-  if (!image || !display) return false
+ipcMain.handle('overlay:confirm', (e, rect: Rect) => {
+  const grab = overlayShots.get(e.sender.id)
+  if (!grab) return false
+  const { image, display } = grab
   const s = display.scaleFactor
   const size = image.getSize()
   const px = {
@@ -339,9 +332,8 @@ ipcMain.handle('overlay:confirm', (_e, rect: Rect) => {
     width: Math.round(rect.width),
     height: Math.round(rect.height)
   }
-  currentImage = null
-  currentDisplay = null
-  closeOverlay()
+  overlayShots.clear()
+  destroyGroup(overlays)
   openEditor()
   return true
 })
@@ -350,13 +342,14 @@ ipcMain.handle('overlay:cancel', () => {
   cleanupCapture()
 })
 
-ipcMain.handle('picker:get-shot', () => {
-  if (!pickerImage || !pickerDisplay) return null
+ipcMain.handle('picker:get-shot', (e) => {
+  const grab = pickerShots.get(e.sender.id)
+  if (!grab) return null
   return {
-    dataUrl: pickerImage.toDataURL(),
-    width: pickerDisplay.size.width,
-    height: pickerDisplay.size.height,
-    scaleFactor: pickerDisplay.scaleFactor
+    dataUrl: grab.image.toDataURL(),
+    width: grab.display.size.width,
+    height: grab.display.size.height,
+    scaleFactor: grab.display.scaleFactor
   }
 })
 
