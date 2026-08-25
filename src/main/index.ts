@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { getSettings, setSettings } from './config'
 import type { EditorShot, ExportRequest, Rect, Settings } from '../shared/types'
 import { checkForUpdates, getUpdaterState, initUpdater, onUpdateState, startUpdate } from './updater'
+import { grabAllDisplaysLinux } from './linux-capture'
 
 interface Grab {
   image: NativeImage
@@ -207,6 +208,11 @@ function registerHotkeys(): void {
 }
 
 async function grabAllDisplays(): Promise<Grab[]> {
+  // On Wayland, try native capture methods that bypass the portal dialog
+  const waylandGrabs = await grabAllDisplaysLinux()
+  if (waylandGrabs && waylandGrabs.length > 0) return waylandGrabs
+
+  // Fallback: Electron desktopCapturer (works under XWayland via re-exec)
   const displays = screen.getAllDisplays()
   const thumbnailSize = {
     width: Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor))),
