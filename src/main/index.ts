@@ -34,6 +34,19 @@ let settings: BrowserWindow | null = null
 let pendingShot: EditorShot | null = null
 let gotLock = true
 
+// Startup forensics land in a file so they're readable even when the app was launched
+// from the GUI with no terminal attached. Delete this once the Wayland saga is over.
+function debugLog(line: string): void {
+  const text = `${new Date().toISOString()} ${line}\n`
+  console.error(`[ss] ${text.trimEnd()}`)
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(join(app.getPath('userData'), 'ss-startup.log'), text, { flag: 'a' })
+  } catch {
+    // logging must never block startup
+  }
+}
+
 // Native-Wayland screen capture goes through xdg-desktop-portal ScreenCast, which pops
 // GNOME's "pick a monitor to share" dialog before every grab, and globalShortcut is
 // unreliable there. Ozone backend selection happens before main-process JS runs, so
@@ -43,10 +56,11 @@ function reexecUnderX11IfNeeded(): void {
   const waylandSession = !!(
     process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
   )
-  console.error(
-    `[ss] pid=${process.pid} reexec=${process.env.SS_X11_REEXEC ?? '0'} wayland=${waylandSession} ` +
-      `display=${process.env.DISPLAY ?? 'unset'} ss_ozone=${process.env.SS_OZONE ?? 'unset'} ` +
-      `hint=${process.env.ELECTRON_OZONE_PLATFORM_HINT ?? 'unset'}`
+  debugLog(
+    `start v${app.getVersion()} pid=${process.pid} reexec=${process.env.SS_X11_REEXEC ?? '0'} ` +
+      `wayland=${waylandSession} display=${process.env.DISPLAY ?? 'unset'} ` +
+      `ss_ozone=${process.env.SS_OZONE ?? 'unset'} hint=${process.env.ELECTRON_OZONE_PLATFORM_HINT ?? 'unset'} ` +
+      `argv0=${process.argv0}`
   )
   if (
     process.platform !== 'linux' ||
@@ -66,12 +80,15 @@ function reexecUnderX11IfNeeded(): void {
           .filter(Boolean)
           .slice(1)
       : process.argv.slice(1)
-  console.error(`[ss] relaunching under x11: ${JSON.stringify([...realArgv, '--ozone-platform=x11'])}`)
+  debugLog(`relaunching under x11: ${JSON.stringify([...realArgv, '--ozone-platform=x11'])}`)
   const child = spawn(process.execPath, [...realArgv, '--ozone-platform=x11'], {
     stdio: 'inherit',
     env: { ...process.env, SS_X11_REEXEC: '1' }
   })
-  child.once('exit', (code) => app.exit(code ?? 0))
+  child.once('exit', (code) => {
+    debugLog(`x11 child exited code=${code}`)
+    app.exit(code ?? 0)
+  })
   gotLock = false
 }
 
@@ -79,8 +96,12 @@ reexecUnderX11IfNeeded()
 
 if (gotLock) {
   gotLock = app.requestSingleInstanceLock()
-  if (!gotLock) app.quit()
 }
+debugLog(
+  `lock=${gotLock} packaged=${app.isPackaged} exec=${process.execPath} ` +
+    `hasOzoneSwitch=${app.commandLine.hasSwitch('ozone-platform')}`
+)
+if (!gotLock) app.quit()
 
 app.on('second-instance', () => {
   void startCapture()
