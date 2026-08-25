@@ -12,7 +12,7 @@ import {
   Tray
 } from 'electron'
 import type { Display, NativeImage } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getSettings, setSettings } from './config'
@@ -80,15 +80,34 @@ function reexecUnderX11IfNeeded(): void {
           .filter(Boolean)
           .slice(1)
       : process.argv.slice(1)
-  debugLog(`relaunching under x11: ${JSON.stringify([...realArgv, '--ozone-platform=x11'])}`)
-  const child = spawn(process.execPath, [...realArgv, '--ozone-platform=x11'], {
-    stdio: 'inherit',
-    env: { ...process.env, SS_X11_REEXEC: '1' }
-  })
-  child.once('exit', (code) => {
-    debugLog(`x11 child exited code=${code}`)
-    app.exit(code ?? 0)
-  })
+  // Mirror electron-builder's AppRun probe: Ubuntu 24.04+ AppArmor usually blocks
+  // unprivileged user namespaces, and Chromium then insists on a working SUID
+  // chrome-sandbox — impossible inside a FUSE-mounted AppImage. The normal launch
+  // gets --no-sandbox from AppRun; bypassing AppRun means we must provide it too.
+  const args = [...realArgv, '--ozone-platform=x11']
+  const userns = spawnSync('unshare', ['-Ur'], { stdio: 'ignore' })
+  if (userns.error || userns.status !== 0) {
+    args.push('--no-sandbox')
+    debugLog('user namespaces unavailable -> appending --no-sandbox')
+  }
+  debugLog(`relaunching under x11: ${JSON.stringify(args)}`)
+  const launchX11Child = (extraFlag: string | null): void => {
+    const childArgs = extraFlag ? [extraFlag, ...args] : args
+    const child = spawn(process.execPath, childArgs, {
+      stdio: 'inherit',
+      env: { ...process.env, SS_X11_REEXEC: '1' }
+    })
+    child.once('exit', (code, signal) => {
+      if (extraFlag === null && ((code !== null && code !== 0) || signal !== null)) {
+        debugLog(`x11 child failed code=${code} signal=${signal}; retrying with --no-sandbox`)
+        launchX11Child('--no-sandbox')
+        return
+      }
+      debugLog(`x11 child exited code=${code}`)
+      app.exit(code ?? 0)
+    })
+  }
+  launchX11Child(null)
   gotLock = false
 }
 
